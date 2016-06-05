@@ -1288,7 +1288,7 @@ app.controller('SubscriptionController', ['$scope', function($scope) {}]);
 app.controller('SubscriptionController', ['$scope', '$rootScope', '$window', 'SubscriptionModel', 'CalendarModel', 'Restangular',
 	function ($scope, $rootScope, $window, SubscriptionModel, CalendarModel, Restangular) {
 		'use strict';
-
+		
 		$scope.subscriptions = SubscriptionModel.getAll();
 		var subscriptionResource = Restangular.all('subscriptions');
 
@@ -2101,7 +2101,7 @@ app.filter('simpleReminderDescription', function() {
 app.filter('subscriptionFilter',
 	[ function () {
 		'use strict';
-
+		
 		var subscriptionfilter = function (item) {
 			var filter = [];
 			if (item.length > 0) {
@@ -2272,6 +2272,9 @@ app.factory('Calendar', ['$rootScope', '$filter', 'VEventService', 'TimezoneServ
 	Calendar.prototype = {
 		hasWarnings: function() {
 			return this.warnings.length > 0;
+		},
+		hasShares: function() {
+			return (this.sharedWith.users.length > 0 || this.sharedWith.groups.length > 0);
 		},
 		get enabled() {
 			return this._mutableProperties.enabled;
@@ -4878,3 +4881,4 @@ app.service('VEventService', ['DavClient', 'VEvent', 'RandomStringService', func
 	};
 
 }]);
+
