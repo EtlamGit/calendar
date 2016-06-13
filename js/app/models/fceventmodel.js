@@ -53,8 +53,8 @@ app.factory('FcEvent', function(SimpleEvent) {
 	function getCalendarRelatedProps (vevent) {
 		return {
 			calendar: vevent.calendar,
-			editable: vevent.calendar.writable,
-			className: ['fcCalendar-id-' + vevent.calendar.tmpId]
+			editable: vevent.calendar.isWritable(),
+			className: ['fcCalendar-id-' + vevent.calendar.getTmpId()]
 		};
 	}
 
@@ -108,14 +108,14 @@ app.factory('FcEvent', function(SimpleEvent) {
 
 	FcEvent.prototype = {
 		get backgroundColor() {
-			return this.vevent.calendar.color;
+			return this.vevent.calendar.getColor();
 		},
 		get borderColor() {
-			return this.vevent.calendar.color;
+			return this.vevent.calendar.getColor();
 
 		},
 		get textColor() {
-			return this.vevent.calendar.textColor;
+			return this.vevent.calendar.getTextColor();
 		},
 		/**
 		 * get SimpleEvent for current fcEvent

@@ -62,7 +62,7 @@ app.service('VEventService', ['DavClient', 'VEvent', 'RandomStringService', func
 		cTimeRange.setAttribute('end', this._getTimeRangeStamp(end));
 		cCompFilterVEvent.appendChild(cTimeRange);
 
-		var url = calendar.url;
+		var url = calendar.getURL();
 		var headers = {
 			'Content-Type': 'application/xml; charset=utf-8',
 			'Depth': 1,
@@ -101,7 +101,7 @@ app.service('VEventService', ['DavClient', 'VEvent', 'RandomStringService', func
 	};
 
 	this.get = function(calendar, uri) {
-		var url = calendar.url + uri;
+		var url = calendar.getURL() + uri;
 		return DavClient.request('GET', url, {'requesttoken' : OC.requestToken}, '').then(function(response) {
 			return new VEvent(calendar, response.body, response.xhr.getResponseHeader('ETag'), uri);
 		});
@@ -117,7 +117,7 @@ app.service('VEventService', ['DavClient', 'VEvent', 'RandomStringService', func
 			'requesttoken': OC.requestToken
 		};
 		var uri = this._generateRandomUri();
-		var url = calendar.url + uri;
+		var url = calendar.getURL() + uri;
 
 		return DavClient.request('PUT', url, headers, data).then(function(response) {
 			if (!DavClient.wasRequestSuccessful(response.status)) {
@@ -132,7 +132,7 @@ app.service('VEventService', ['DavClient', 'VEvent', 'RandomStringService', func
 	};
 
 	this.update = function(event) {
-		var url = event.calendar.url + event.uri;
+		var url = event.calendar.getURL() + event.uri;
 		var headers = {
 			'Content-Type': 'text/calendar; charset=utf-8',
 			'If-Match': event.etag,
@@ -146,7 +146,7 @@ app.service('VEventService', ['DavClient', 'VEvent', 'RandomStringService', func
 	};
 
 	this.delete = function(event) {
-		var url = event.calendar.url + event.uri;
+		var url = event.calendar.getURL() + event.uri;
 		var headers = {
 			'If-Match': event.etag,
 			'requesttoken': OC.requestToken

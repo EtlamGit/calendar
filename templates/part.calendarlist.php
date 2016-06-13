@@ -24,7 +24,7 @@
 ?>
 <ul class="app-navigation-list calendar-list">
 	<div ng-class="{'icon-loading-small': is.loading}"></div>
-	<li ng-repeat="calendar in calendars | orderBy:['order'] | calendarFilter" class="app-navigation-list-item" ng-class="{active: calendar.enabled}">
+	<li ng-repeat="item in calendarListItems | orderBy: item.getCalendar().getOrder() | calendarListFilter" class="app-navigation-list-item" ng-class="{active: item.getCalendar().getEnabled()}">
 		<?php print_unescaped($this->inc('part.calendarlist.item')); ?>
 	</li>
 </ul>

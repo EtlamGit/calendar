@@ -26,14 +26,43 @@
 * Description: Takes care of CalendarList in App Navigation.
 */
 
-app.controller('CalendarListController', ['$scope', '$rootScope', '$window', 'CalendarService', 'is',
-	function ($scope, $rootScope, $window, CalendarService, is) {
+app.controller('CalendarListController', ['$scope', '$rootScope', '$window', 'CalendarService', 'is', 'CalendarListItem', 'Calendar',
+	function ($scope, $rootScope, $window, CalendarService, is, CalendarListItem, Calendar) {
 		'use strict';
 
+		$scope.calendarListItems = [];
 		$scope.is = is;
 		$scope.newCalendarInputVal = '';
 		$scope.newCalendarColorVal = '';
-		$scope.currentUser = oc_current_user;
+
+		window.scope = $scope;
+
+		$scope.$watchCollection('calendars', function(newCalendars, oldCalendars) {
+			newCalendars = newCalendars || [];
+			oldCalendars = oldCalendars || [];
+
+			newCalendars.filter(function(calendar) {
+				return oldCalendars.indexOf(calendar) === -1;
+			}).forEach(function(calendar) {
+				const item = CalendarListItem(calendar);
+				if (item) {
+					$scope.calendarListItems.push(item);
+					calendar.register(Calendar.hookFinishedRendering, function() {
+						if (!$scope.$$phase) {
+							$scope.$apply();
+						}
+					});
+				}
+			});
+
+			oldCalendars.filter(function(calendar) {
+				return newCalendars.indexOf(calendar) === -1;
+			}).forEach(function(calendar) {
+				$scope.calendarListItems = $scope.calendarListItems.filter(function(calendarToCheck) {
+					return calendarToCheck !== calendar;
+				});
+			});
+		});
 
 		$scope.create = function (name, color) {
 			CalendarService.create(name, color).then(function(calendar) {
@@ -47,8 +76,8 @@ app.controller('CalendarListController', ['$scope', '$rootScope', '$window', 'Ca
 			angular.element('#new-calendar-button').click();
 		};
 
-		$scope.download = function (calendar) {
-			var url = calendar.url;
+		$scope.download = function (item) {
+			var url = item.getCalendar().getURL();
 			// cut off last slash to have a fancy name for the ics
 			if (url.slice(url.length - 1) === '/') {
 				url = url.slice(0, url.length - 1);
@@ -161,28 +190,12 @@ app.controller('CalendarListController', ['$scope', '$rootScope', '$window', 'Ca
 			});
 		};
 
-		$scope.cancelUpdate = function (calendar) {
-			calendar.resetToPreviousState();
-		};
-
-		$scope.performUpdate = function (calendar) {
-			CalendarService.update(calendar).then(function() {
-				calendar.dropPreviousState();
-				calendar.list.edit = false;
-				$rootScope.$broadcast('updatedCalendar', calendar);
+		$scope.performUpdate = function (item) {
+			item.saveEditor();
+			CalendarService.update(item.getCalendar()).then(function() {
+				$rootScope.$broadcast('updatedCalendar', item.getCalendar());
 				$rootScope.$broadcast('reloadCalendarList');
 			});
-		};
-
-		/**
-		 * trigger visibility of caldav link
-		 */
-		$scope.showCalDAVLink = function(calendar) {
-			calendar.list.showCalDAVLink = true;
-		};
-
-		$scope.hideCalDAVLink = function(calendar) {
-			calendar.list.showCalDAVLink = false;
 		};
 
 		/**
@@ -197,26 +210,24 @@ app.controller('CalendarListController', ['$scope', '$rootScope', '$window', 'Ca
 			});
 		};
 
-		$scope.triggerEnable = function(calendar) {
-			calendar.list.loading = true;
-			calendar.enabled = !calendar.enabled;
+		$scope.triggerEnable = function(item) {
+			item.getCalendar().toggleEnabled();
 
-			CalendarService.update(calendar).then(function() {
-				$rootScope.$broadcast('updatedCalendarsVisibility', calendar);
+			CalendarService.update(item.getCalendar()).then(function() {
+				$rootScope.$broadcast('updatedCalendarsVisibility', item.getCalendar());
 				$rootScope.$broadcast('reloadCalendarList');
 			});
 		};
 
-		$scope.remove = function (calendar) {
-			calendar.list.loading = true;
-			CalendarService.delete(calendar).then(function() {
-				$rootScope.$broadcast('removedCalendar', calendar);
+		$scope.remove = function (item) {
+			CalendarService.delete(item.getCalendar()).then(function() {
+				$rootScope.$broadcast('removedCalendar', item.getCalendar());
 				$rootScope.$broadcast('reloadCalendarList');
 			});
 		};
 
 		$rootScope.$on('reloadCalendarList', function() {
-			if(!$scope.$$phase) {
+			if (!$scope.$$phase) {
 				$scope.$apply();
 			}
 		});

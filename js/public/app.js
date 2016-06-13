@@ -141,8 +141,8 @@ app.controller('AttendeeController', ["$scope", "AutoCompletionService", functio
 * Description: The fullcalendar controller.
 */
 
-app.controller('CalController', ['$scope', '$rootScope', '$window', 'CalendarService', 'VEventService', 'SettingsService', 'TimezoneService', 'VEvent', 'is', 'uiCalendarConfig', 'EventsEditorDialogService',
-	function ($scope, $rootScope, $window, CalendarService, VEventService, SettingsService, TimezoneService, VEvent, is, uiCalendarConfig, EventsEditorDialogService) {
+app.controller('CalController', ['$scope', '$rootScope', '$window', 'Calendar', 'CalendarService', 'VEventService', 'SettingsService', 'TimezoneService', 'VEvent', 'is', 'uiCalendarConfig', 'EventsEditorDialogService',
+	function ($scope, $rootScope, $window, Calendar, CalendarService, VEventService, SettingsService, TimezoneService, VEvent, is, uiCalendarConfig, EventsEditorDialogService) {
 		'use strict';
 
 		is.loading = true;
@@ -177,7 +177,7 @@ app.controller('CalController', ['$scope', '$rootScope', '$window', 'CalendarSer
 
 		function createAndRenderEvent(calendar, data, start, end, tz) {
 			VEventService.create(calendar, data).then(function(vevent) {
-				if (calendar.enabled) {
+				if (calendar.getEnabled()) {
 					var eventsToRender = vevent.getFcEvent(start, end, tz);
 					angular.forEach(eventsToRender, function (event) {
 						uiCalendarConfig.calendars.calendar.fullCalendar('renderEvent', event);
@@ -192,20 +192,32 @@ app.controller('CalController', ['$scope', '$rootScope', '$window', 'CalendarSer
 			});
 		}
 
-		$scope.$watchCollection('calendars', function(newCalendarCollection, oldCalendarCollection) {
-			var newCalendars = newCalendarCollection.filter(function(calendar) {
-				return oldCalendarCollection.indexOf(calendar) === -1;
-			});
-
-			angular.forEach(newCalendars, function(calendar) {
-				calendar.registerCallback('enabled', function(enabled) {
+		$scope.$watchCollection('calendars', function(newCalendars, oldCalendars) {
+			newCalendars.filter(function(calendar) {
+				return oldCalendars.indexOf(calendar) === -1;
+			}).forEach(function(calendar) {
+				calendar.register(Calendar.hookEnabledChanged, function(enabled) {
 					if (enabled) {
-						showCalendar(calendar.url);
+						showCalendar(calendar.getURL());
 					} else {
-						hideCalendar(calendar.url);
-						calendar.list.loading = false;
+						hideCalendar(calendar.getURL());
+						//calendar.list.loading = false;
 					}
 				});
+
+				calendar.register(Calendar.hookColorChanged, function(calendar) {
+					hideCalendar(calendar.getURL());
+					showCalendar(calendar.getURL());
+				});
+			});
+
+			oldCalendars.filter(function(calendar) {
+				return newCalendars.indexOf(calendar) === -1;
+			}).forEach(function(calendar) {
+				var url = calendar.getURL();
+				hideCalendar(calendar.getURL());
+
+				delete $scope.eventSource[url];
 			});
 		});
 
@@ -237,9 +249,9 @@ app.controller('CalController', ['$scope', '$rootScope', '$window', 'CalendarSer
 			$scope.$apply();
 
 			angular.forEach($scope.calendars, function (calendar) {
-				$scope.eventSource[calendar.url] = calendar.fcEventSource;
-				if (calendar.enabled) {
-					showCalendar(calendar.url);
+				$scope.eventSource[calendar.getURL()] = calendar.getFcEventSource();
+				if (calendar.getEnabled()) {
+					showCalendar(calendar.getURL());
 				}
 			});
 		});
@@ -346,7 +358,7 @@ app.controller('CalController', ['$scope', '$rootScope', '$window', 'CalendarSer
 				firstDay: moment().startOf('week').format('d'),
 				select: function (start, end, jsEvent, view) {
 					var writableCalendars = $scope.calendars.filter(function(elem) {
-						return elem.writable;
+						return elem.isWritable();
 					});
 
 					if (writableCalendars.length === 0) {
@@ -475,38 +487,7 @@ app.controller('CalController', ['$scope', '$rootScope', '$window', 'CalendarSer
 			}
 		};
 
-		/**
-		 * After a calendar was updated:
-		 * - show/hide
-		 * - update calendar
-		 * - update permissions
-		 */
-		$rootScope.$on('updatedCalendar', function (event, updatedCalendar) {
-			var url = updatedCalendar.url;
-
-			if ($scope.eventSource[url].color !== updatedCalendar.color) {
-				hideCalendar(updatedCalendar.url);
-				showCalendar(updatedCalendar.url);
-			}
-			$scope.eventSource[url].editable = updatedCalendar.writable;
-		});
-
-		/**
-		 * After a calendar was deleted:
-		 * - remove event source from fullcalendar
-		 * - delete event source object
-		 */
-		$rootScope.$on('removedCalendar', function (event, calendar) {
-			$scope.calendars = $scope.calendars.filter(function (element) {
-				return element.url !== calendar.url;
-			});
-
-			var deletedObject = calendar.url;
-			hideCalendar(calendar.url);
-
-			delete $scope.eventSource[deletedObject];
-		});
-
+		// TODO - where is this triggered
 		$rootScope.$on('refetchEvents', function (event, calendar) {
 			uiCalendarConfig.calendars.calendar.fullCalendar('refetchEvents');
 		});
@@ -518,14 +499,43 @@ app.controller('CalController', ['$scope', '$rootScope', '$window', 'CalendarSer
 * Description: Takes care of CalendarList in App Navigation.
 */
 
-app.controller('CalendarListController', ['$scope', '$rootScope', '$window', 'CalendarService', 'is',
-	function ($scope, $rootScope, $window, CalendarService, is) {
+app.controller('CalendarListController', ['$scope', '$rootScope', '$window', 'CalendarService', 'is', 'CalendarListItem', 'Calendar',
+	function ($scope, $rootScope, $window, CalendarService, is, CalendarListItem, Calendar) {
 		'use strict';
 
+		$scope.calendarListItems = [];
 		$scope.is = is;
 		$scope.newCalendarInputVal = '';
 		$scope.newCalendarColorVal = '';
-		$scope.currentUser = oc_current_user;
+
+		window.scope = $scope;
+
+		$scope.$watchCollection('calendars', function(newCalendars, oldCalendars) {
+			newCalendars = newCalendars || [];
+			oldCalendars = oldCalendars || [];
+
+			newCalendars.filter(function(calendar) {
+				return oldCalendars.indexOf(calendar) === -1;
+			}).forEach(function(calendar) {
+				const item = CalendarListItem(calendar);
+				if (item) {
+					$scope.calendarListItems.push(item);
+					calendar.register(Calendar.hookFinishedRendering, function() {
+						if (!$scope.$$phase) {
+							$scope.$apply();
+						}
+					});
+				}
+			});
+
+			oldCalendars.filter(function(calendar) {
+				return newCalendars.indexOf(calendar) === -1;
+			}).forEach(function(calendar) {
+				$scope.calendarListItems = $scope.calendarListItems.filter(function(calendarToCheck) {
+					return calendarToCheck !== calendar;
+				});
+			});
+		});
 
 		$scope.create = function (name, color) {
 			CalendarService.create(name, color).then(function(calendar) {
@@ -539,8 +549,8 @@ app.controller('CalendarListController', ['$scope', '$rootScope', '$window', 'Ca
 			angular.element('#new-calendar-button').click();
 		};
 
-		$scope.download = function (calendar) {
-			var url = calendar.url;
+		$scope.download = function (item) {
+			var url = item.getCalendar().getURL();
 			// cut off last slash to have a fancy name for the ics
 			if (url.slice(url.length - 1) === '/') {
 				url = url.slice(0, url.length - 1);
@@ -653,28 +663,12 @@ app.controller('CalendarListController', ['$scope', '$rootScope', '$window', 'Ca
 			});
 		};
 
-		$scope.cancelUpdate = function (calendar) {
-			calendar.resetToPreviousState();
-		};
-
-		$scope.performUpdate = function (calendar) {
-			CalendarService.update(calendar).then(function() {
-				calendar.dropPreviousState();
-				calendar.list.edit = false;
-				$rootScope.$broadcast('updatedCalendar', calendar);
+		$scope.performUpdate = function (item) {
+			item.saveEditor();
+			CalendarService.update(item.getCalendar()).then(function() {
+				$rootScope.$broadcast('updatedCalendar', item.getCalendar());
 				$rootScope.$broadcast('reloadCalendarList');
 			});
-		};
-
-		/**
-		 * trigger visibility of caldav link
-		 */
-		$scope.showCalDAVLink = function(calendar) {
-			calendar.list.showCalDAVLink = true;
-		};
-
-		$scope.hideCalDAVLink = function(calendar) {
-			calendar.list.showCalDAVLink = false;
 		};
 
 		/**
@@ -689,26 +683,24 @@ app.controller('CalendarListController', ['$scope', '$rootScope', '$window', 'Ca
 			});
 		};
 
-		$scope.triggerEnable = function(calendar) {
-			calendar.list.loading = true;
-			calendar.enabled = !calendar.enabled;
+		$scope.triggerEnable = function(item) {
+			item.getCalendar().toggleEnabled();
 
-			CalendarService.update(calendar).then(function() {
-				$rootScope.$broadcast('updatedCalendarsVisibility', calendar);
+			CalendarService.update(item.getCalendar()).then(function() {
+				$rootScope.$broadcast('updatedCalendarsVisibility', item.getCalendar());
 				$rootScope.$broadcast('reloadCalendarList');
 			});
 		};
 
-		$scope.remove = function (calendar) {
-			calendar.list.loading = true;
-			CalendarService.delete(calendar).then(function() {
-				$rootScope.$broadcast('removedCalendar', calendar);
+		$scope.remove = function (item) {
+			CalendarService.delete(item.getCalendar()).then(function() {
+				$rootScope.$broadcast('removedCalendar', item.getCalendar());
 				$rootScope.$broadcast('reloadCalendarList');
 			});
 		};
 
 		$rootScope.$on('reloadCalendarList', function() {
-			if(!$scope.$$phase) {
+			if (!$scope.$$phase) {
 				$scope.$apply();
 			}
 		});
@@ -1952,11 +1944,28 @@ app.filter('calendarFilter', function() {
 			if (typeof element !== 'object') {
 				return false;
 			} else {
-				return element.writable;
+				return element.isWritable();
 			}
 		});
 	};
 });
+
+app.filter('calendarListFilter', ["CalendarListItem", function(CalendarListItem) {
+	'use strict';
+
+	return function (calendarListItems) {
+		if (!Array.isArray(calendarListItems)) {
+			return [];
+		}
+
+		return calendarListItems.filter(function(item) {
+			if (!CalendarListItem.isCalendarListItem(item)) {
+				return false;
+			}
+			return item.getCalendar().isWritable();
+		});
+	};
+}]);
 
 app.filter('calendarSelectorFilter', function () {
 	'use strict';
@@ -2140,11 +2149,28 @@ app.filter('subscriptionFilter', function () {
 			if (typeof element !== 'object') {
 				return false;
 			} else {
-				return !element.writable;
+				return !element.isWritable();
 			}
 		});
 	};
 });
+
+app.filter('subscriptionListFilter', ["CalendarListItem", function(CalendarListItem) {
+	'use strict';
+
+	return function (calendarListItems) {
+		if (!Array.isArray(calendarListItems)) {
+			return [];
+		}
+
+		return calendarListItems.filter(function(item) {
+			if (!CalendarListItem.isCalendarListItem(item)) {
+				return false;
+			}
+			return !item.getCalendar().isWritable();
+		});
+	};
+}]);
 
 app.filter('timezoneFilter', ['$filter', function($filter) {
 	'use strict';
@@ -2179,195 +2205,319 @@ app.filter('timezoneWithoutContinentFilter', function() {
 	};
 });
 
-app.factory('Calendar', ['$rootScope', '$filter', 'VEventService', 'TimezoneService', 'RandomStringService', function($rootScope, $filter, VEventService, TimezoneService, RandomStringService) {
+app.factory('CalendarListItem', ["Calendar", function(Calendar) {
 	'use strict';
 
-	function generateTextColor(r,g,b) {
-		var brightness = (((r * 299) + (g * 587) + (b * 114)) / 1000);
-		return (brightness > 130) ? '#000000' : '#FAFAFA';
+	function CalendarListItem(calendar) {
+		const context = {
+			calendar: calendar,
+			isEditingShares: false,
+			isEditingProperties: false,
+			isDisplayingCalDAVUrl: false
+		};
+		const iface = {
+			_isACalendarListItemObject: true
+		};
+
+		if (!Calendar.isCalendar(calendar)) {
+			return null;
+		}
+
+		Object.defineProperties(iface, {
+			calendar: {
+				get: function() {
+					return context.calendar;
+				}
+			}
+		});
+		
+		iface.displayCalDAVUrl = function() {
+			return context.isDisplayingCalDAVUrl;
+		};
+
+		iface.isDisplayingCalDAVUrl = function() {
+			context.isDisplayingCalDAVUrl = true;
+		};
+
+		iface.hideCalDAVUrl = function() {
+			context.isDisplayingCalDAVUrl = false;
+		};
+
+		iface.isEditingShares = function() {
+			return context.isEditingShares;
+		};
+
+		iface.toggleEditingShares = function() {
+			context.isEditingShares = !context.isEditingShares;
+		};
+
+		iface.isEditing = function() {
+			return context.isEditingProperties;
+		};
+
+		iface.displayActions = function() {
+			return (!iface.isEditing() && !context.calendar.isRendering());
+		};
+
+		iface.displaySpinner = function() {
+			return (!iface.isEditing() && context.calendar.isRendering());
+		};
+
+		iface.openEditor = function() {
+			iface.color = context.calendar.color;
+			iface.displayname = context.calendar.displayname;
+			iface.order = context.calendar.order;
+
+			context.isEditingProperties = true;
+		};
+
+		iface.cancelEditor = function() {
+			iface.color = '';
+			iface.displayname = '';
+			iface.order = 0;
+
+			context.isEditingProperties = false;
+		};
+
+		iface.saveEditor = function() {
+			context.calendar.color = iface.color;
+			context.calendar.displayname = iface.displayname;
+
+			context.isEditingProperties = false;
+		};
+
+		//Properties for ng-model of calendar editor
+		iface.color = '';
+		iface.displayname = '';
+		iface.order = 0;
+
+		iface.selectedSharee = '';
+
+		return iface;
 	}
+
+	CalendarListItem.isCalendarListItem = function(obj) {
+		return obj instanceof CalendarListItem || (typeof obj === 'object' && obj !== null && obj._isACalendarListItemObject !== null);
+	};
+
+	return CalendarListItem;
+}]);
+
+app.factory('Calendar', ["$window", "Hook", "VEventService", "TimezoneService", "ColorUtilityService", "RandomStringService", function($window, Hook, VEventService, TimezoneService, ColorUtilityService, RandomStringService) {
+	'use strict';
 
 	function Calendar(url, props) {
-		var self = this;
-
-		var enabled = props.enabled;
-		if (typeof enabled === 'undefined') {
-			if (typeof props.owner !== 'undefined') {
-				enabled = props.owner === oc_current_user;
-			} else {
-				enabled = false;
-			}
-		}
-		if (typeof props.color !== 'undefined') {
-			if (props.color.length === 9) {
-				props.color = props.color.substr(0,7);
-			}
-		} else {
-			props.color = '#1d2d44';
-		}
-
-		angular.extend(this, {
-			_mutableProperties: {
-				displayname: props.displayname,
-				enabled: enabled,
+		const context = {
+			fcEventSource: {},
+			components: props.components,
+			mutableProperties: {
 				color: props.color,
+				displayname: props.displayname,
+				enabled: props.enabled,
 				order: props.order
-			}
-		});
-
-		delete props.displayname;
-		delete props.enabled;
-		delete props.color;
-		delete props.order;
-
-		angular.extend(this, props, {
-			_callbacks: {
-				enabled: function() {}
 			},
-			_propertiesBackup: {},
 			updatedProperties: [],
-			caldav: window.location.origin + url,
-			url: url,
 			tmpId: RandomStringService.generate(),
+			url: url,
+			owner: props.owner,
+			shares: props.sharedWith,
 			warnings: [],
-			fcEventSource: {
-				events: function (start, end, timezone, callback) {
-					TimezoneService.get(timezone).then(function(tz) {
-						self.list.loading = true;
-						self.fcEventSource.isRendering = true;
-						$rootScope.$broadcast('reloadCalendarList');
+			shareable: props.shareable,
+			writable: props.writable,
+			writableProperties: props.writableProperties
+		};
+		const iface = {
+			_isACalendarObject: true
+		};
 
-						VEventService.getAll(self, start, end).then(function(events) {
-							var vevents = [];
-							for (var i = 0; i < events.length; i++) {
-								var vevent;
-								try {
-									vevent = events[i].getFcEvent(start, end, tz);
-								} catch (err) {
-									self.warnings.push(err.toString());
-									console.log(err);
-									console.log(events[i]);
-									continue;
-								}
-								vevents = vevents.concat(vevent);
-							}
+		context.fcEventSource.events = function (start, end, timezone, callback) {
+			TimezoneService.get(timezone).then(function (tz) {
+				context.fcEventSource.isRendering = true;
+				iface.emit(Calendar.hookFinishedRendering);
 
-							callback(vevents);
-							self.fcEventSource.isRendering = false;
+				VEventService.getAll(iface, start, end).then(function (events) {
+					var vevents = [];
+					for (var i = 0; i < events.length; i++) {
+						var vevent;
+						try {
+							vevent = events[i].getFcEvent(start, end, tz);
+						} catch (err) {
+							iface.addWarning(err.toString());
+							console.log(err);
+							console.log(events[i]);
+							continue;
+						}
+						vevents = vevents.concat(vevent);
+					}
 
-							self.list.loading = false;
-							$rootScope.$broadcast('reloadCalendarList');
-						});
-					});
+					callback(vevents);
+					context.fcEventSource.isRendering = false;
+
+					iface.emit(Calendar.hookFinishedRendering);
+				});
+			});
+		};
+		context.fcEventSource.editable = context.writable;
+		context.fcEventSource.calendar = iface;
+		context.fcEventSource.isRendering = false;
+
+		context.setUpdated = function(property) {
+			if (context.updatedProperties.indexOf(property) === -1) {
+				context.updatedProperties.push(property);
+			}
+		};
+
+		Object.defineProperties(iface, {
+			color: {
+				get: function() {
+					return context.mutableProperties.color;
 				},
-				editable: this.writable,
-				calendar: this,
-				isRendering: false
+				set: function(color) {
+					var oldColor = context.mutableProperties.color;
+					context.mutableProperties.color = color;
+					context.setUpdated('color');
+					iface.emit(Calendar.hookColorChanged, color, oldColor);
+				}
 			},
-			list: {
-				edit: false,
-				loading: this.enabled,
-				locked: false,
-				editingShares: false
+			textColor: {
+				get: function() {
+					const colors = ColorUtilityService.extractRGBFromHexString(iface.getColor());
+					return ColorUtilityService.generateTextColorFromRGB(colors.r, colors.g, colors.b);
+				}
 			},
-			registerCallback: function(prop, callback) {
-				this._callbacks[prop] = callback;
+			displayname: {
+				get: function() {
+					return context.mutableProperties.displayname;
+				},
+				set: function(displayname) {
+					var oldDisplayname = context.mutableProperties.displayname;
+					context.mutableProperties.displayname = displayname;
+					context.setUpdated('displayname');
+					iface.emit(Calendar.hookDisplaynameChanged, displayname, oldDisplayname);
+				}
 			},
-			_setUpdated: function(propName) {
-				if (this.updatedProperties.indexOf(propName) === -1) {
-					this.updatedProperties.push(propName);
+			enabled: {
+				get: function() {
+					return context.mutableProperties.enabled;
+				},
+				set: function(enabled) {
+					var oldEnabled = context.mutableProperties.enabled;
+					context.mutableProperties.enabled = enabled;
+					context.setUpdated('enabled');
+					iface.emit(Calendar.hookEnabledChanged, enabled, oldEnabled);
+				}
+			},
+			order: {
+				get: function() {
+					return context.mutableProperties.order;
+				},
+				set: function(order) {
+					var oldOrder = context.mutableProperties.order;
+					context.mutableProperties.order = order;
+					context.setUpdated('order');
+					iface.emit(Calendar.hookOrderChanged, order, oldOrder);
 				}
 
-				var callback = this._callbacks[propName] || function(){};
-				callback(this._mutableProperties[propName]);
 			},
-			resetUpdatedProperties: function() {
-				this.updatedProperties = [];
+			url: {
+				get: function() {
+					return context.url;
+				}
 			},
-			prepareUpdate: function() {
-				this.list.edit = true;
-				this._propertiesBackup = angular.copy(this._mutableProperties);
+			caldav: {
+				get: function() {
+					return $window.location.origin + context.url;
+				}
 			},
-			resetToPreviousState: function() {
-				this._mutableProperties = angular.copy(this._propertiesBackup);
-				this.list.edit = false;
-				this.dropPreviousState();
+			fcEventSource: {
+				get: function() {
+					return context.fcEventSource;
+				}
 			},
-			dropPreviousState: function() {
-				this._propertiesBackup = {};
+			shares: {
+				get: function() {
+					return context.shares;
+				}
 			},
-			toggleSharesEditor: function() {
-				this.list.editingShares = !this.list.editingShares;
+			tmpId: {
+				get: function() {
+					return context.tmpId;
+				}
 			}
 		});
+
+		iface.hasUpdated = function() {
+			return context.updatedProperties.length !== 0;
+		};
+
+		iface.getUpdated = function() {
+			return context.updatedProperties;
+		};
+
+		iface.addWarning = function(msg) {
+			context.warnings.push(msg);
+		};
+
+		iface.hasWarnings = function() {
+			return context.warnings.length > 0;
+		};
+
+		iface.resetWarnings = function() {
+			context.warnings = [];
+		};
+
+		iface.toggleEnabled = function() {
+			context.mutableProperties.enabled = !context.mutableProperties.enabled;
+			context.setUpdated('enabled');
+			iface.emit(Calendar.hookEnabledChanged, context.mutableProperties.enabled, !context.mutableProperties.enabled);
+		};
+
+		iface.isShared = function() {
+			return context.shares.groups.length !== 0 ||
+					context.shares.groups.length !== 0;
+		};
+
+		iface.isPublished = function() {
+			return false;
+		};
+
+		iface.isShareable = function() {
+			return context.shareable;
+		};
+
+		iface.isPublishable = function() {
+			return false;
+		};
+
+		iface.isRendering = function() {
+			return context.fcEventSource.isRendering;
+		};
+
+		iface.isWritable = function() {
+			return context.writable;
+		};
+
+		iface.arePropertiesWritable = function() {
+			return context.writableProperties;
+		};
+
+		Object.assign(
+			iface,
+			Hook(context)
+		);
+
+		return iface;
 	}
 
-	Calendar.prototype = {
-		hasWarnings: function() {
-			return this.warnings.length > 0;
-		},
-		get enabled() {
-			return this._mutableProperties.enabled;
-		},
-		set enabled(enabled) {
-			this._mutableProperties.enabled = enabled;
-			this._setUpdated('enabled');
-		},
-		get displayname() {
-			return this._mutableProperties.displayname;
-		},
-		set displayname(displayname) {
-			this._mutableProperties.displayname = displayname;
-			this._setUpdated('displayname');
-		},
-		get color() {
-			return this._mutableProperties.color;
-		},
-		set color(color) {
-			this._mutableProperties.color = color;
-			this._setUpdated('color');
-		},
-		get order() {
-			return this._mutableProperties.order;
-		},
-		set order(order) {
-			this._mutableProperties.order = order;
-			this._setUpdated('order');
-		},
-		get textColor() {
-			var color = this.color;
-			var fallbackColor = '#fff';
-			var c;
-			switch (color.length) {
-				case 4:
-					c = color.match(/^#([0-9a-f]{3})$/i)[1];
-					if (c) {
-						return generateTextColor(
-							parseInt(c.charAt(0),16)*0x11,
-							parseInt(c.charAt(1),16)*0x11,
-							parseInt(c.charAt(2),16)*0x11
-						);
-					}
-					return fallbackColor;
-
-				case 7:
-				case 9:
-					var regex = new RegExp('^#([0-9a-f]{' + (color.length - 1) + '})$', 'i');
-					c = color.match(regex)[1];
-					if (c) {
-						return generateTextColor(
-							parseInt(c.substr(0,2),16),
-							parseInt(c.substr(2,2),16),
-							parseInt(c.substr(4,2),16)
-						);
-					}
-					return fallbackColor;
-
-				default:
-					return fallbackColor;
-			}
-		}
+	Calendar.isCalendar = function(obj) {
+		return obj instanceof Calendar || (typeof obj === 'object' && obj !== null && obj._isACalendarObject !== null);
 	};
+
+	Calendar.hookFinishedRendering = 1;
+	Calendar.hookColorChanged = 2;
+	Calendar.hookDisplaynameChanged = 3;
+	Calendar.hookEnabledChanged = 4;
+	Calendar.hookOrderChanged = 5;
 
 	return Calendar;
 }]);
@@ -2404,8 +2554,8 @@ app.factory('FcEvent', ["SimpleEvent", function(SimpleEvent) {
 	function getCalendarRelatedProps (vevent) {
 		return {
 			calendar: vevent.calendar,
-			editable: vevent.calendar.writable,
-			className: ['fcCalendar-id-' + vevent.calendar.tmpId]
+			editable: vevent.calendar.isWritable(),
+			className: ['fcCalendar-id-' + vevent.calendar.getTmpId()]
 		};
 	}
 
@@ -2459,14 +2609,14 @@ app.factory('FcEvent', ["SimpleEvent", function(SimpleEvent) {
 
 	FcEvent.prototype = {
 		get backgroundColor() {
-			return this.vevent.calendar.color;
+			return this.vevent.calendar.getColor();
 		},
 		get borderColor() {
-			return this.vevent.calendar.color;
+			return this.vevent.calendar.getColor();
 
 		},
 		get textColor() {
-			return this.vevent.calendar.textColor;
+			return this.vevent.calendar.getTextColor();
 		},
 		/**
 		 * get SimpleEvent for current fcEvent
@@ -2519,6 +2669,30 @@ app.factory('FcEvent', ["SimpleEvent", function(SimpleEvent) {
 
 	return FcEvent;
 }]);
+
+app.factory('Hook', function() {
+	'use strict';
+
+	return function Hook(context) {
+		context.hooks = {};
+		const iface = {};
+		
+		iface.emit = function(identifier, newValue, oldValue) {
+			if (Array.isArray(context.hooks[identifier])) {
+				context.hooks[identifier].forEach(function(callback) {
+					callback(newValue, oldValue);
+				});
+			}
+		};
+		
+		iface.register = function(identifier, callback) {
+			context.hooks[identifier] = context.hooks[identifier] || [];
+			context.hooks[identifier].push(callback);
+		};
+
+		return iface;
+	};
+});
 
 app.factory('SimpleEvent', function() {
 	'use strict';
@@ -3479,6 +3653,10 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 
 	this._xmls = new XMLSerializer();
 
+	function ucfirst(string) {
+		return string.charAt(0).toUpperCase() + string.slice(1);
+	}
+
 	function discoverHome(callback) {
 		return DavClient.propFind(DavClient.buildUrl(OC.linkToRemoteBase('dav')), ['{' + DavClient.NS_DAV + '}current-user-principal'], 0, {'requesttoken': OC.requestToken}).then(function(response) {
 			if (!DavClient.wasRequestSuccessful(response.status)) {
@@ -3543,7 +3721,7 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 					continue;
 				}
 
-				var calendar = new Calendar(body.href, props);
+				var calendar = Calendar(body.href, props);
 				calendars.push(calendar);
 			}
 
@@ -3576,7 +3754,7 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 				return;
 			}
 
-			return new Calendar(body.href, props);
+			return Calendar(body.href, props);
 		});
 	};
 
@@ -3654,17 +3832,20 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 		var dProp = xmlDoc.createElement('d:prop');
 		dSet.appendChild(dProp);
 
-		var updatedProperties = calendar.updatedProperties;
-		calendar.resetUpdatedProperties();
+		var updatedProperties = calendar.getUpdated();
+		if (updatedProperties.length === 0) {
+			//nothing to do here
+			return calendar;
+		}
 		for (var i=0; i < updatedProperties.length; i++) {
 			dProp.appendChild(this._createXMLForProperty(
 				xmlDoc,
 				updatedProperties[i],
-				calendar[updatedProperties[i]]
+				calendar['get' + ucfirst(updatedProperties[i])]()
 			));
 		}
 
-		var url = calendar.url;
+		var url = calendar.getURL();
 		var body = this._xmls.serializeToString(dPropUpdate);
 		var headers = {
 			'Content-Type' : 'application/xml; charset=utf-8',
@@ -3677,7 +3858,7 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 	};
 
 	this.delete = function(calendar) {
-		return DavClient.request('DELETE', calendar.url, {'requesttoken': OC.requestToken}, '').then(function(response) {
+		return DavClient.request('DELETE', calendar.getURL(), {'requesttoken': OC.requestToken}, '').then(function(response) {
 			if (response.status === 204) {
 				return true;
 			} else {
@@ -3896,6 +4077,21 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 			}
 		}
 
+		if (typeof simple.enabled === 'undefined') {
+			if (typeof simple.owner !== 'undefined') {
+				simple.enabled = simple.owner === oc_current_user;
+			} else {
+				simple.enabled = false;
+			}
+		}
+		if (typeof simple.color !== 'undefined') {
+			if (simple.color.length === 9) {
+				simple.color = simple.color.substr(0,7);
+			}
+		} else {
+			simple.color = '#1d2d44';
+		}
+
 		return simple;
 	};
 
@@ -3976,27 +4172,6 @@ app.service('ColorUtilityService', function() {
 	 * @type {string[]}
 	 */
 	this.colors = [];
-
-	if (typeof String.prototype.toHsl === 'function') {
-		//0 40 80 120 160 200 240 280 320
-		var hashValues = ['15', '9', '4', 'b', '6', '11', '74', 'f', '57'];
-		angular.forEach(hashValues, function(hashValue) {
-			var hsl = hashValue.toHsl();
-			var hslColor = hslToRgb(hsl[0], hsl[1], hsl[2]);
-			self.colors.push(self.rgbToHex(hslColor));
-		});
-	} else {
-		this.colors = [
-			'#31CC7C',
-			'#317CCC',
-			'#FF7A66',
-			'#F1DB50',
-			'#7C31CC',
-			'#CC317C',
-			'#3A3B3D',
-			'#CACBCD'
-		];
-	}
 
 	/**
 	 * generate an appropriate text color based on background color
@@ -4087,6 +4262,28 @@ app.service('ColorUtilityService', function() {
 			return self.colors[Math.floor(Math.random() * self.colors.length)];
 		}
 	};
+
+	// initialize default colors
+	if (typeof String.prototype.toHsl === 'function') {
+		//0 40 80 120 160 200 240 280 320
+		var hashValues = ['15', '9', '4', 'b', '6', '11', '74', 'f', '57'];
+		angular.forEach(hashValues, function(hashValue) {
+			var hsl = hashValue.toHsl();
+			var hslColor = hslToRgb(hsl[0], hsl[1], hsl[2]);
+			self.colors.push(self.rgbToHex(hslColor));
+		});
+	} else {
+		this.colors = [
+			'#31CC7C',
+			'#317CCC',
+			'#FF7A66',
+			'#F1DB50',
+			'#7C31CC',
+			'#CC317C',
+			'#3A3B3D',
+			'#CACBCD'
+		];
+	}
 });
 
 app.service('DavClient', function() {
@@ -4925,7 +5122,7 @@ app.service('VEventService', ['DavClient', 'VEvent', 'RandomStringService', func
 		cTimeRange.setAttribute('end', this._getTimeRangeStamp(end));
 		cCompFilterVEvent.appendChild(cTimeRange);
 
-		var url = calendar.url;
+		var url = calendar.getURL();
 		var headers = {
 			'Content-Type': 'application/xml; charset=utf-8',
 			'Depth': 1,
@@ -4964,7 +5161,7 @@ app.service('VEventService', ['DavClient', 'VEvent', 'RandomStringService', func
 	};
 
 	this.get = function(calendar, uri) {
-		var url = calendar.url + uri;
+		var url = calendar.getURL() + uri;
 		return DavClient.request('GET', url, {'requesttoken' : OC.requestToken}, '').then(function(response) {
 			return new VEvent(calendar, response.body, response.xhr.getResponseHeader('ETag'), uri);
 		});
@@ -4980,7 +5177,7 @@ app.service('VEventService', ['DavClient', 'VEvent', 'RandomStringService', func
 			'requesttoken': OC.requestToken
 		};
 		var uri = this._generateRandomUri();
-		var url = calendar.url + uri;
+		var url = calendar.getURL() + uri;
 
 		return DavClient.request('PUT', url, headers, data).then(function(response) {
 			if (!DavClient.wasRequestSuccessful(response.status)) {
@@ -4995,7 +5192,7 @@ app.service('VEventService', ['DavClient', 'VEvent', 'RandomStringService', func
 	};
 
 	this.update = function(event) {
-		var url = event.calendar.url + event.uri;
+		var url = event.calendar.getURL() + event.uri;
 		var headers = {
 			'Content-Type': 'text/calendar; charset=utf-8',
 			'If-Match': event.etag,
@@ -5009,7 +5206,7 @@ app.service('VEventService', ['DavClient', 'VEvent', 'RandomStringService', func
 	};
 
 	this.delete = function(event) {
-		var url = event.calendar.url + event.uri;
+		var url = event.calendar.getURL() + event.uri;
 		var headers = {
 			'If-Match': event.etag,
 			'requesttoken': OC.requestToken

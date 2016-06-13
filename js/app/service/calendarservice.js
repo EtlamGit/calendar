@@ -47,6 +47,10 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 
 	this._xmls = new XMLSerializer();
 
+	function ucfirst(string) {
+		return string.charAt(0).toUpperCase() + string.slice(1);
+	}
+
 	function discoverHome(callback) {
 		return DavClient.propFind(DavClient.buildUrl(OC.linkToRemoteBase('dav')), ['{' + DavClient.NS_DAV + '}current-user-principal'], 0, {'requesttoken': OC.requestToken}).then(function(response) {
 			if (!DavClient.wasRequestSuccessful(response.status)) {
@@ -111,7 +115,7 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 					continue;
 				}
 
-				var calendar = new Calendar(body.href, props);
+				var calendar = Calendar(body.href, props);
 				calendars.push(calendar);
 			}
 
@@ -144,7 +148,7 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 				return;
 			}
 
-			return new Calendar(body.href, props);
+			return Calendar(body.href, props);
 		});
 	};
 
@@ -222,17 +226,20 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 		var dProp = xmlDoc.createElement('d:prop');
 		dSet.appendChild(dProp);
 
-		var updatedProperties = calendar.updatedProperties;
-		calendar.resetUpdatedProperties();
+		var updatedProperties = calendar.getUpdated();
+		if (updatedProperties.length === 0) {
+			//nothing to do here
+			return calendar;
+		}
 		for (var i=0; i < updatedProperties.length; i++) {
 			dProp.appendChild(this._createXMLForProperty(
 				xmlDoc,
 				updatedProperties[i],
-				calendar[updatedProperties[i]]
+				calendar['get' + ucfirst(updatedProperties[i])]()
 			));
 		}
 
-		var url = calendar.url;
+		var url = calendar.getURL();
 		var body = this._xmls.serializeToString(dPropUpdate);
 		var headers = {
 			'Content-Type' : 'application/xml; charset=utf-8',
@@ -245,7 +252,7 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 	};
 
 	this.delete = function(calendar) {
-		return DavClient.request('DELETE', calendar.url, {'requesttoken': OC.requestToken}, '').then(function(response) {
+		return DavClient.request('DELETE', calendar.getURL(), {'requesttoken': OC.requestToken}, '').then(function(response) {
 			if (response.status === 204) {
 				return true;
 			} else {
@@ -462,6 +469,21 @@ app.service('CalendarService', ['DavClient', 'Calendar', function(DavClient, Cal
 					});
 				}
 			}
+		}
+
+		if (typeof simple.enabled === 'undefined') {
+			if (typeof simple.owner !== 'undefined') {
+				simple.enabled = simple.owner === oc_current_user;
+			} else {
+				simple.enabled = false;
+			}
+		}
+		if (typeof simple.color !== 'undefined') {
+			if (simple.color.length === 9) {
+				simple.color = simple.color.substr(0,7);
+			}
+		} else {
+			simple.color = '#1d2d44';
 		}
 
 		return simple;

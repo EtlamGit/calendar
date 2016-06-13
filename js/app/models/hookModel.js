@@ -20,20 +20,27 @@
  * License along with this library.  If not, see <http://www.gnu.org/licenses/>.
  *
  */
-app.filter('calendarFilter', function() {
+
+app.factory('Hook', function() {
 	'use strict';
 
-	return function (calendars) {
-		if (!Array.isArray(calendars)) {
-			return [];
-		}
-
-		return calendars.filter(function(element) {
-			if (typeof element !== 'object') {
-				return false;
-			} else {
-				return element.isWritable();
+	return function Hook(context) {
+		context.hooks = {};
+		const iface = {};
+		
+		iface.emit = function(identifier, newValue, oldValue) {
+			if (Array.isArray(context.hooks[identifier])) {
+				context.hooks[identifier].forEach(function(callback) {
+					callback(newValue, oldValue);
+				});
 			}
-		});
+		};
+		
+		iface.register = function(identifier, callback) {
+			context.hooks[identifier] = context.hooks[identifier] || [];
+			context.hooks[identifier].push(callback);
+		};
+
+		return iface;
 	};
 });
